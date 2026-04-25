@@ -1012,7 +1012,10 @@ body.meeting-body {
   opacity: 0.55;
 }
 .poll-option.selected .poll-bar { background: var(--vermillion-soft); opacity: 0.7; }
-.poll-option > * { position: relative; z-index: 1; }
+/* Tous les enfants SAUF la barre passent en relative — la barre doit rester
+   absolute pour ne pas squeezer le label en flex (cf. bug : à 100% de votes,
+   le texte du label se brisait lettre par lettre). */
+.poll-option > *:not(.poll-bar) { position: relative; z-index: 1; }
 
 .poll-label {
   flex: 1;
@@ -1710,3 +1713,123 @@ body.is-host .host-badge { display: inline-block; }
 }
 .host-info::before { content: '★ '; color: var(--vermillion); font-size: 0.85rem; }
 .host-info b { color: var(--ink); font-weight: 600; }
+
+/* ===========================================================================
+   11. SESSIONS SAUVEGARDÉES — Liste sur la page d'accueil
+   =========================================================================== */
+
+.saved-sessions {
+  margin-bottom: 1.5rem;
+  padding: 1rem 0 1.4rem;
+  border-bottom: 1px dashed var(--paper-fold);
+  position: relative;
+}
+.saved-sessions-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.7rem;
+}
+.saved-sessions-head .kicker {
+  margin-bottom: 0;
+}
+.clear-sessions {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  color: var(--ink-faded);
+  text-transform: uppercase;
+  box-shadow: none;
+  cursor: pointer;
+}
+.clear-sessions:hover {
+  color: var(--vermillion);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.session-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.session-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--paper-fold);
+  background: var(--paper);
+  border-radius: var(--radius);
+  transition: border-color 120ms, transform 80ms;
+}
+.session-item:hover {
+  border-color: var(--ink);
+}
+
+.session-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  text-decoration: none;
+  color: inherit;
+  border-bottom: none;
+  min-width: 0;
+}
+.session-link:hover { color: inherit; }
+
+.session-title {
+  font-family: var(--serif-display);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variation-settings: 'opsz' 36, 'SOFT' 60, 'WONK' 1;
+}
+
+.session-meta {
+  display: flex;
+  gap: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: var(--ink-faded);
+  text-transform: uppercase;
+}
+.session-meta .role {
+  color: var(--vermillion);
+  font-weight: 600;
+}
+.session-meta .id { letter-spacing: 0.05em; }
+
+.session-forget {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-faded);
+  padding: 0.25rem 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0;
+  text-transform: none;
+  box-shadow: none;
+}
+.session-forget:hover {
+  color: var(--vermillion);
+  background: var(--vermillion-soft);
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}

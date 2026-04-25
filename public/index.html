@@ -43,6 +43,14 @@
       <aside class="home-action">
         <div class="action-stack">
 
+          <div id="savedSessions" class="saved-sessions hidden">
+            <div class="saved-sessions-head">
+              <span class="kicker" style="margin-bottom:0">— Vos sessions</span>
+              <button id="clearSessions" class="clear-sessions">Tout oublier</button>
+            </div>
+            <ul id="sessionList" class="session-list"></ul>
+          </div>
+
           <button id="newMeetingBtn" class="primary big">
             <span>Inaugurer une session</span>
             <span class="arrow">→</span>
@@ -59,7 +67,7 @@
               <span class="arrow">→</span>
             </a>
             <div class="host-info">
-              Vous êtes l'<b>animateur·rice</b> de cette session — vous pouvez verrouiller chaque zone et exclure des participants. Ce rôle est lié à ce navigateur.
+              Vous êtes l'<b>animateur·rice</b> de cette session. Cliquez sur "Rejoindre maintenant" : le rôle est attaché à <b>cet onglet</b>. Le lien à partager (ci-dessus) ne donne pas le rôle d'animateur — il garde votre privilège pour vous.
             </div>
           </div>
 
@@ -102,6 +110,149 @@
       }, ms);
     }
 
+    // ---------- Stockage des sessions ----------
+    // Une seule clé `meetings` = JSON array de { id, hostToken, title, createdAt }
+    // Migration : on récupère aussi les anciennes clés `host:<id>` (premier modèle).
+    const STORE_KEY = 'meetings';
+    function loadStore() {
+      try {
+        const raw = localStorage.getItem(STORE_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        // Migration : ancien format `host:<id>` → push dans le tableau
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('host:')) {
+            const id = k.slice(5);
+            if (!arr.find(m => m.id === id)) {
+              arr.push({ id, hostToken: localStorage.getItem(k), title: '(session sauvegardée)', createdAt: 0 });
+            }
+          }
+        }
+        return arr;
+      } catch { return []; }
+    }
+    function saveStore(arr) {
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(arr)); } catch {}
+    }
+    function addToStore(meeting) {
+      const arr = loadStore();
+      const i = arr.findIndex(m => m.id === meeting.id);
+      if (i >= 0) arr[i] = meeting; else arr.unshift(meeting);
+      saveStore(arr);
+    }
+    function removeFromStore(id) {
+      const arr = loadStore().filter(m => m.id !== id);
+      saveStore(arr);
+      // Cleanup ancien format au passage
+      try { localStorage.removeItem('host:' + id); } catch {}
+    }
+
+    // ---------- Rendu de la liste ----------
+    const savedSessions = document.getElementById('savedSessions');
+    const sessionList = document.getElementById('sessionList');
+    const clearSessionsBtn = document.getElementById('clearSessions');
+
+    async function renderSessions() {
+      const arr = loadStore();
+      if (arr.length === 0) {
+        savedSessions.classList.add('hidden');
+        return;
+      }
+      savedSessions.classList.remove('hidden');
+      sessionList.innerHTML = '';
+
+      // On affiche d'abord avec les titres en cache, puis on rafraîchit via API.
+      arr.forEach(m => sessionList.appendChild(renderSessionItem(m)));
+
+      // Vérifier l'existence côté serveur, mettre à jour les titres
+      let dirty = false;
+      const updated = await Promise.all(arr.map(async m => {
+        try {
+          const r = await fetch('/api/meetings/' + encodeURIComponent(m.id));
+          if (r.status === 404) return null; // supprimée
+          if (!r.ok) return m;
+          const data = await r.json();
+          if (data.title && data.title !== m.title) {
+            dirty = true;
+            return { ...m, title: data.title };
+          }
+          return m;
+        } catch { return m; }
+      }));
+      const alive = updated.filter(Boolean);
+      if (alive.length !== arr.length || dirty) {
+        saveStore(alive);
+        // Re-render avec les titres frais
+        sessionList.innerHTML = '';
+        if (alive.length === 0) savedSessions.classList.add('hidden');
+        else alive.forEach(m => sessionList.appendChild(renderSessionItem(m)));
+      }
+    }
+
+    function renderSessionItem(m) {
+      const li = document.createElement('li');
+      li.className = 'session-item';
+
+      const link = document.createElement('a');
+      link.className = 'session-link';
+      // URL avec hash → l'onglet ouvert deviendra animateur
+      link.href = `/m/${m.id}#host=${encodeURIComponent(m.hostToken)}`;
+
+      const title = document.createElement('span');
+      title.className = 'session-title';
+      title.textContent = m.title || '(sans titre)';
+
+      const meta = document.createElement('span');
+      meta.className = 'session-meta';
+      const role = document.createElement('span');
+      role.className = 'role';
+      role.textContent = '★ ANIMATEUR';
+      const id = document.createElement('span');
+      id.className = 'id';
+      id.textContent = m.id.toUpperCase();
+      meta.appendChild(role);
+      meta.appendChild(id);
+      if (m.createdAt) {
+        const d = document.createElement('span');
+        const date = new Date(m.createdAt);
+        d.textContent = date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+        meta.appendChild(d);
+      }
+
+      link.appendChild(title);
+      link.appendChild(meta);
+
+      const forget = document.createElement('button');
+      forget.className = 'session-forget';
+      forget.textContent = '✕';
+      forget.title = 'Oublier cette session (la réunion n\'est pas supprimée)';
+      forget.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        removeFromStore(m.id);
+        renderSessions();
+      });
+
+      li.appendChild(link);
+      li.appendChild(forget);
+      return li;
+    }
+
+    clearSessionsBtn.addEventListener('click', () => {
+      if (!confirm('Oublier toutes les sessions sauvegardées ? Les réunions ne sont pas supprimées côté serveur.')) return;
+      saveStore([]);
+      // Cleanup ancien format
+      const toRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('host:')) toRemove.push(k);
+      }
+      toRemove.forEach(k => localStorage.removeItem(k));
+      renderSessions();
+    });
+
+    renderSessions();
+
     // ---------- Création de réunion ----------
     const btn = document.getElementById('newMeetingBtn');
     const result = document.getElementById('result');
@@ -122,13 +273,20 @@
         });
         if (!res.ok) throw new Error('Serveur injoignable');
         const data = await res.json();
-        const fullUrl = window.location.origin + data.url;
-        urlInput.value = fullUrl;
-        goBtn.href = data.url;
-        // Le hostToken est renvoyé UNE SEULE FOIS — on le stocke pour pouvoir
-        // l'envoyer lors du join et obtenir le rôle d'animateur.
+        const shareUrl = window.location.origin + data.url;
+        // Le bouton "Rejoindre" inclut le hash #host=token : la sessionStorage
+        // de l'onglet capturera le token et l'animateur sera reconnu.
+        // L'input de partage NE contient PAS le hash → on partage sans leak.
+        urlInput.value = shareUrl;
+        goBtn.href = data.url + '#host=' + encodeURIComponent(data.hostToken);
         if (data.hostToken) {
-          try { localStorage.setItem('host:' + data.id, data.hostToken); } catch {}
+          addToStore({
+            id: data.id,
+            hostToken: data.hostToken,
+            title: 'Nouvelle réunion',
+            createdAt: Date.now(),
+          });
+          renderSessions();
         }
         result.classList.remove('hidden');
         toast('Session ouverte — vous êtes l\'animateur', 'info');
@@ -144,7 +302,7 @@
       try {
         await navigator.clipboard.writeText(urlInput.value);
         copyBtn.textContent = 'Copié ✓';
-        toast('Lien copié dans le presse-papiers', 'info', 2000);
+        toast('Lien partageable copié (sans le rôle animateur)', 'info', 2200);
         setTimeout(() => (copyBtn.textContent = 'Copier'), 1800);
       } catch {
         urlInput.select();

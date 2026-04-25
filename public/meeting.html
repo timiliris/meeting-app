@@ -189,8 +189,23 @@
       localStorage.setItem('voterId', voterId);
     }
 
+    // hostToken : on le récupère via le hash de l'URL (#host=xxx) au premier
+    // passage, on le stocke en sessionStorage (PAR-ONGLET, pas par-navigateur)
+    // pour éviter que tous les onglets du même navigateur deviennent animateur.
+    // Le hash est aussitôt nettoyé pour éviter de leaker le token si l'URL est partagée.
     let hostToken = null;
-    try { hostToken = localStorage.getItem('host:' + meetingId); } catch {}
+    try {
+      const hash = window.location.hash;
+      const m = hash.match(/[#&]host=([^&]+)/);
+      if (m) {
+        hostToken = decodeURIComponent(m[1]);
+        sessionStorage.setItem('host:' + meetingId, hostToken);
+        // Nettoyer l'URL — supprime le hash sans recharger
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+      } else {
+        hostToken = sessionStorage.getItem('host:' + meetingId);
+      }
+    } catch {}
 
     // ===========================================================================
     // 3. MODALE PSEUDO
