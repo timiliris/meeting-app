@@ -622,19 +622,20 @@ body.meeting-body {
   100% { transform: scale(1); }
 }
 
-/* Layout principal — 3 colonnes */
+/* Layout principal — flex avec splitters draggables */
 .layout {
-  display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(0, 2.1fr) minmax(280px, 1fr);
+  display: flex;
+  flex-direction: row;
   gap: 0;
   flex: 1;
   min-height: 0;
   position: relative;
+  overflow: hidden;
 }
 @media (max-width: 1100px) {
   .layout {
-    grid-template-columns: 1fr;
-    height: auto;
+    flex-direction: column;
+    overflow: visible;
   }
 }
 
@@ -644,17 +645,129 @@ body.meeting-body {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  border-right: var(--rule);
   min-height: 0;
   animation: rise 500ms cubic-bezier(.2,.7,.2,1) both;
+  position: relative;
 }
-.panel:last-child { border-right: none; }
-.panel:nth-child(2) { background: var(--paper-deep); animation-delay: 80ms; }
-.panel:nth-child(3) { animation-delay: 160ms; }
+.panel.notes-panel { background: var(--paper-deep); animation-delay: 80ms; }
+.panel#pollsPanel { animation-delay: 160ms; }
+
+/* Tailles par défaut — JS les surcharge via style.flex */
+.panel-side   { flex: 0 0 320px; min-width: 220px; max-width: 600px; }
+.panel-center { flex: 1 1 0;     min-width: 280px; }
 
 @media (max-width: 1100px) {
-  .panel { border-right: none; border-bottom: var(--rule); }
-  .panel:last-child { border-bottom: none; }
+  .panel,
+  .panel-side,
+  .panel-center {
+    flex: 0 0 auto !important;
+    width: 100%;
+    border-bottom: var(--rule);
+    max-width: none;
+  }
+  .panel:last-of-type { border-bottom: none; }
+}
+
+/* Splitter — barre verticale draggable entre deux panneaux */
+.splitter {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--ink);
+  position: relative;
+  z-index: 5;
+  user-select: none;
+  transition: background 120ms;
+}
+.splitter::after {
+  /* poignée centrale : 3 points verticaux */
+  content: '⋮';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--mono);
+  font-size: 1.2rem;
+  color: var(--paper);
+  line-height: 1;
+  pointer-events: none;
+  letter-spacing: -0.1em;
+}
+.splitter:hover { background: var(--vermillion); }
+.splitter.dragging { background: var(--vermillion); }
+@media (max-width: 1100px) { .splitter { display: none; } }
+
+/* Bouton replier dans le panel-head */
+.panel-collapse {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-faded);
+  padding: 0.15rem 0.5rem;
+  font-family: var(--mono);
+  font-size: 1.1rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  box-shadow: none;
+  border-radius: var(--radius);
+  line-height: 1;
+}
+.panel-collapse:hover {
+  color: var(--ink);
+  border-color: var(--paper-fold);
+  background: var(--paper);
+  box-shadow: none;
+  transform: none;
+}
+
+/* Panneau replié — bande verticale avec titre rotaté */
+.panel.collapsed {
+  flex: 0 0 44px !important;
+  min-width: 0 !important;
+  max-width: 44px !important;
+  padding: 0 !important;
+  cursor: pointer;
+  overflow: hidden;
+  border-right: none;
+}
+.panel.collapsed > * { display: none !important; }
+.panel.collapsed::before {
+  content: attr(data-collapsed-label);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-family: var(--serif-display);
+  font-style: italic;
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--ink-soft);
+  letter-spacing: 0.02em;
+  font-variation-settings: 'opsz' 36, 'SOFT' 60, 'WONK' 1;
+  background: var(--paper-deep);
+  border-left: var(--rule);
+  border-right: var(--rule);
+  transition: color 120ms, background 120ms;
+}
+.panel.collapsed:hover::before {
+  color: var(--vermillion);
+  background: var(--paper);
+}
+@media (max-width: 1100px) {
+  .panel.collapsed {
+    flex: 0 0 auto !important;
+    max-width: none !important;
+    width: 100%;
+    height: 50px;
+  }
+  .panel.collapsed::before {
+    writing-mode: horizontal-tb;
+    border-left: none;
+    border-right: none;
+    border-bottom: var(--rule);
+  }
 }
 
 /* Custom scrollbar */

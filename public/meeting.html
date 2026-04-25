@@ -69,13 +69,14 @@
   <main class="layout">
 
     <!-- Colonne agenda -->
-    <section class="panel" id="topicsPanel">
+    <section class="panel panel-side" id="topicsPanel" data-collapsed-label="Agenda">
       <div class="panel-head">
         <h2>Ordre <em>du jour</em></h2>
         <div class="panel-head-right">
           <span class="typing-here" id="topicsTyping"><span class="dots"><span></span></span><span class="label"></span></span>
           <button class="lock-toggle" data-area="topics">Verrouiller</button>
           <span class="num" id="topicsCount">00 SUJETS</span>
+          <button class="panel-collapse" title="Réduire le panneau" aria-label="Réduire">−</button>
         </div>
       </div>
       <div class="lock-banner" id="topicsLockBanner">Agenda verrouillé par l'animateur</div>
@@ -87,14 +88,17 @@
       </div>
     </section>
 
+    <div class="splitter" data-resize="topicsPanel"></div>
+
     <!-- Colonne notes -->
-    <section class="panel notes-panel" id="notesPanel">
+    <section class="panel notes-panel panel-center" id="notesPanel" data-collapsed-label="Notes">
       <div class="panel-head">
         <h2>Notes <em>collectives</em></h2>
         <div class="panel-head-right">
           <span class="typing-here" id="notesTyping"><span class="dots"><span></span></span><span class="label"></span></span>
           <button class="lock-toggle" data-area="notes">Verrouiller</button>
           <span class="num">PRISE&nbsp;COMMUNE</span>
+          <button class="panel-collapse" title="Réduire le panneau" aria-label="Réduire">−</button>
         </div>
       </div>
       <div class="notes-tabs">
@@ -116,14 +120,17 @@
       </div>
     </section>
 
+    <div class="splitter" data-resize="pollsPanel"></div>
+
     <!-- Colonne sondages -->
-    <section class="panel" id="pollsPanel">
+    <section class="panel panel-side" id="pollsPanel" data-collapsed-label="Sondages">
       <div class="panel-head">
         <h2>Scrutins <em>express</em></h2>
         <div class="panel-head-right">
           <span class="typing-here" id="pollsTyping"><span class="dots"><span></span></span><span class="label"></span></span>
           <button class="lock-toggle" data-area="polls">Verrouiller</button>
           <span class="num" id="pollsCount">00 ACTIFS</span>
+          <button class="panel-collapse" title="Réduire le panneau" aria-label="Réduire">−</button>
         </div>
       </div>
       <div class="lock-banner" id="pollsLockBanner">Scrutins verrouillés par l'animateur</div>
@@ -502,8 +509,13 @@
       cursorsContainer.innerHTML = '';
       const states = awareness.getStates();
       states.forEach((state, clientId) => {
+        // Skip soi-même par clientID Yjs
         if (clientId === ydoc.clientID) return;
-        if (!state.user || !state.cursor) return;
+        // Skip soi-même par socketId (belt+suspenders : si jamais notre awareness
+        // contient un fantôme d'une session précédente avec notre socketId)
+        if (mySocketId && state.user && state.user.socketId === mySocketId) return;
+        // Skip les états incomplets (pas encore identifiés ou orphelins)
+        if (!state.user || !state.user.name || !state.cursor) return;
         let abs;
         try {
           const headRel = Y.decodeRelativePosition(new Uint8Array(state.cursor.head));
@@ -518,15 +530,147 @@
         el.style.top = (coords.top - notes.scrollTop) + 'px';
         el.style.left = (coords.left - notes.scrollLeft) + 'px';
         el.style.height = coords.height + 'px';
-        el.title = state.user.name || '';
+        el.title = state.user.name;
 
         const label = document.createElement('span');
         label.className = 'remote-cursor-label';
-        label.textContent = state.user.name || '?';
+        label.textContent = state.user.name;
         el.appendChild(label);
 
         cursorsContainer.appendChild(el);
       });
+    }
+
+    // Nettoyage des fantômes d'awareness : si un état a un socketId qui n'est
+    // plus dans la liste des participants actifs (déconnexion abrupte, race
+    // au rejoin, etc.), on retire l'état localement.
+    function cleanupStaleAwareness(activeParticipants) {
+      const activeSocketIds = new Set(activeParticipants.map(p => p.socketId));
+      const toRemove = [];
+      awareness.getStates().forEach((state, clientId) => {
+        if (clientId === ydoc.clientID) return; // jamais soi-même
+        const sid = state.user && state.user.socketId;
+        // Si on connaît son socketId mais qu'il n'est plus actif → fantôme
+        if (sid && !activeSocketIds.has(sid)) toRemove.push(clientId);
+      });
+      if (toRemove.length) {
+        removeAwarenessStates(awareness, toRemove, 'remote');
+      }
+    }
+
+    // ===========================================================================
+    // 4d. LAYOUT — splitters draggables + panneaux repliables
+    // ===========================================================================
+
+    const LAYOUT_KEY = 'layout-v1';
+    const sidePanels = document.querySelectorAll('.panel-side');
+    const allPanels = document.querySelectorAll('.panel');
+    const splitters = document.querySelectorAll('.splitter');
+
+    function saveLayout() {
+      const state = {};
+      allPanels.forEach(p => {
+        const id = p.id;
+        state[id] = {
+          collapsed: p.classList.contains('collapsed'),
+        };
+        if (p.classList.contains('panel-side') && !p.classList.contains('collapsed')) {
+          state[id].width = p.offsetWidth;
+        }
+      });
+      try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(state)); } catch {}
+    }
+
+    function restoreLayout() {
+      try {
+        const raw = localStorage.getItem(LAYOUT_KEY);
+        if (!raw) return;
+        const state = JSON.parse(raw);
+        Object.entries(state).forEach(([id, s]) => {
+          const p = document.getElementById(id);
+          if (!p) return;
+          if (s.collapsed) {
+            p.classList.add('collapsed');
+          } else if (s.width && p.classList.contains('panel-side')) {
+            p.style.flex = `0 0 ${s.width}px`;
+          }
+        });
+      } catch {}
+      syncSplitters();
+    }
+    function syncSplitters() {
+      splitters.forEach(s => {
+        const target = document.getElementById(s.dataset.resize);
+        s.style.display = (target && target.classList.contains('collapsed')) ? 'none' : '';
+      });
+    }
+    restoreLayout();
+
+    // --- Collapse / expand ---
+    document.querySelectorAll('.panel-collapse').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const panel = btn.closest('.panel');
+        panel.classList.add('collapsed');
+        saveLayout();
+        syncSplitters();
+        requestAnimationFrame(renderRemoteCursors);
+      });
+    });
+    document.querySelectorAll('.panel').forEach(panel => {
+      panel.addEventListener('click', (e) => {
+        if (panel.classList.contains('collapsed')) {
+          panel.classList.remove('collapsed');
+          saveLayout();
+          syncSplitters();
+          requestAnimationFrame(renderRemoteCursors);
+        }
+      });
+    });
+
+    // --- Drag des splitters ---
+    splitters.forEach(splitter => {
+      splitter.addEventListener('mousedown', (e) => startSplitterDrag(e, splitter));
+      splitter.addEventListener('touchstart', (e) => startSplitterDrag(e, splitter), { passive: false });
+    });
+
+    function startSplitterDrag(e, splitter) {
+      e.preventDefault();
+      // Le data-resize indique quel panneau on redimensionne
+      const targetId = splitter.dataset.resize;
+      const target = document.getElementById(targetId);
+      if (!target || target.classList.contains('collapsed')) return;
+      const isLeftSide = target === splitter.previousElementSibling;
+      const startX = (e.touches ? e.touches[0].clientX : e.clientX);
+      const startW = target.offsetWidth;
+      splitter.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      function onMove(ev) {
+        const x = (ev.touches ? ev.touches[0].clientX : ev.clientX);
+        const dx = x - startX;
+        const newW = isLeftSide ? startW + dx : startW - dx;
+        target.style.flex = `0 0 ${Math.max(220, Math.min(600, newW))}px`;
+        // Re-rendre les curseurs distants : la largeur du textarea change
+        // donc le wrap aussi.
+        requestAnimationFrame(renderRemoteCursors);
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onUp);
+        splitter.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        saveLayout();
+        requestAnimationFrame(renderRemoteCursors);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('touchend', onUp);
     }
 
     // ===========================================================================
@@ -606,6 +750,10 @@
 
       socket.on('participants', (list) => {
         renderPresence(list);
+        // Cross-check awareness contre les participants actifs : retire les
+        // fantômes (états awareness orphelins après une déco abrupte).
+        cleanupStaleAwareness(list);
+        requestAnimationFrame(renderRemoteCursors);
       });
 
       socket.on('locks:update', (locks) => applyLocks(locks));
