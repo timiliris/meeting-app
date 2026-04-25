@@ -966,6 +966,64 @@ body.meeting-body {
 .notes-meta .by { color: var(--vermillion); }
 .notes-meta .stats { text-align: right; }
 
+/* ----- Notes editor : container pour textarea + overlay curseurs ----- */
+.notes-editor {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.notes-cursors {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 3;
+}
+
+.remote-cursor {
+  --c: var(--vermillion);
+  position: absolute;
+  width: 2px;
+  background: var(--c);
+  pointer-events: none;
+  will-change: transform, top, left;
+  transition: top 100ms linear, left 100ms linear;
+}
+.remote-cursor::before {
+  /* Petit fanion en haut du curseur */
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -2px;
+  width: 6px;
+  height: 5px;
+  background: var(--c);
+  border-radius: 1px;
+}
+.remote-cursor-label {
+  position: absolute;
+  bottom: 100%;
+  left: -1px;
+  margin-bottom: 4px;
+  background: var(--c);
+  color: #fff;
+  padding: 2px 6px 1px;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border-radius: var(--radius);
+  font-weight: 500;
+  line-height: 1.2;
+  opacity: 0.9;
+  transform-origin: bottom left;
+  pointer-events: none;
+}
+
 /* ===========================================================================
    2.3 SONDAGES — Bulletins de vote
    =========================================================================== */

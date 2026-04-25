@@ -104,7 +104,10 @@
       </div>
       <div class="notes-wrap">
         <div class="lock-banner" id="notesLockBanner">Notes verrouillées par l'animateur</div>
-        <textarea id="notes" class="notes-area" placeholder="Tapez ici. Vous pouvez utiliser le Markdown — passez sur Aperçu pour voir le rendu." spellcheck="true"></textarea>
+        <div class="notes-editor" id="notesEditor">
+          <textarea id="notes" class="notes-area" placeholder="Tapez ici. Édition concurrente : chacun écrit où est son curseur. Markdown supporté — passez sur Aperçu pour voir le rendu." spellcheck="true"></textarea>
+          <div class="notes-cursors" id="notesCursors" aria-hidden="true"></div>
+        </div>
         <div id="notesPreview" class="notes-preview hidden markdown"></div>
         <div class="notes-meta">
           <span id="notesBy" class="by"></span>
@@ -139,7 +142,18 @@
 
   <div class="toast-stack" id="toastStack"></div>
 
-  <script>
+  <script type="module">
+    // ===========================================================================
+    // 0. CRDT — Yjs pour les notes collaboratives multi-curseurs
+    // ===========================================================================
+    import * as Y from 'https://esm.sh/yjs@13.6.10';
+    import {
+      Awareness,
+      encodeAwarenessUpdate,
+      applyAwarenessUpdate,
+      removeAwarenessStates
+    } from 'https://esm.sh/y-protocols@1.0.6/awareness';
+
     // ===========================================================================
     // 1. UTILITAIRES — toasts, markdown, couleurs, IDs
     // ===========================================================================
@@ -244,6 +258,13 @@
       localStorage.setItem('pseudo', pseudo);
       joinModal.classList.add('hidden');
 
+      // Identité awareness — socketId sera enrichi quand l'event 'role' arrive
+      awareness.setLocalStateField('user', {
+        name: pseudo,
+        color: colorForName(pseudo),
+        socketId: null,
+      });
+
       socket = io();
       bindSocket();
       socket.emit('join', { meetingId, name: pseudo, hostToken });
@@ -332,6 +353,183 @@
     });
 
     // ===========================================================================
+    // 4c. YJS — CRDT pour notes collaboratives + curseurs distants
+    // ===========================================================================
+
+    const ydoc = new Y.Doc();
+    const ytext = ydoc.getText('notes');
+    const awareness = new Awareness(ydoc);
+    const cursorsContainer = document.getElementById('notesCursors');
+    const notesEditor = document.getElementById('notesEditor');
+
+    // État local pour le diff input → ytext
+    let prevNotesValue = '';
+    // Positions de curseur en RelativePosition (résilientes aux ops distantes)
+    let lastAnchor = null;
+    let lastHead = null;
+    let suppressCapture = false;
+
+    function captureSelection() {
+      if (suppressCapture) return;
+      lastAnchor = Y.createRelativePositionFromTypeIndex(ytext, notes.selectionStart);
+      lastHead   = Y.createRelativePositionFromTypeIndex(ytext, notes.selectionEnd);
+      // Diffuse la position via awareness (sérialisable JSON)
+      try {
+        awareness.setLocalStateField('cursor', {
+          anchor: Array.from(Y.encodeRelativePosition(lastAnchor)),
+          head:   Array.from(Y.encodeRelativePosition(lastHead)),
+        });
+      } catch {}
+    }
+
+    // Local input → diff → ytext ops
+    function onLocalNotesInput() {
+      const newValue = notes.value;
+      const old = prevNotesValue;
+      let start = 0;
+      const minLen = Math.min(old.length, newValue.length);
+      while (start < minLen && old.charCodeAt(start) === newValue.charCodeAt(start)) start++;
+      let endOld = old.length, endNew = newValue.length;
+      while (endOld > start && endNew > start &&
+             old.charCodeAt(endOld - 1) === newValue.charCodeAt(endNew - 1)) {
+        endOld--; endNew--;
+      }
+      const inserted = newValue.slice(start, endNew);
+      const deletedLen = endOld - start;
+      if (deletedLen > 0 || inserted) {
+        ydoc.transact(() => {
+          if (deletedLen > 0) ytext.delete(start, deletedLen);
+          if (inserted) ytext.insert(start, inserted);
+        }, 'local');
+      }
+      prevNotesValue = newValue;
+      captureSelection();
+      updateNotesStats();
+      emitTyping('notes');
+    }
+
+    // Remote ytext changes → textarea (preserve cursor via RelativePosition)
+    ytext.observe((event) => {
+      if (event.transaction.origin === 'local') {
+        prevNotesValue = ytext.toString();
+        return;
+      }
+      const newText = ytext.toString();
+      suppressCapture = true;
+      notes.value = newText;
+      prevNotesValue = newText;
+      if (lastAnchor && lastHead) {
+        const a = Y.createAbsolutePositionFromRelativePosition(lastAnchor, ydoc);
+        const h = Y.createAbsolutePositionFromRelativePosition(lastHead, ydoc);
+        if (a && h) {
+          try { notes.setSelectionRange(a.index, h.index); } catch {}
+        }
+      }
+      suppressCapture = false;
+      updateNotesStats();
+      if (notesMode === 'preview') renderNotesPreview();
+      requestAnimationFrame(renderRemoteCursors);
+    });
+
+    // Local Yjs updates → serveur
+    ydoc.on('update', (update, origin) => {
+      if (origin === 'remote') return; // déjà venu d'un pair
+      if (socket && socket.connected) socket.emit('yjs:update', update);
+    });
+
+    // Awareness updates → serveur + re-render
+    awareness.on('update', ({ added, updated, removed }, origin) => {
+      if (origin !== 'remote') {
+        const changedClients = added.concat(updated).concat(removed);
+        const update = encodeAwarenessUpdate(awareness, changedClients);
+        if (socket && socket.connected) socket.emit('yjs:awareness', update);
+      }
+      requestAnimationFrame(renderRemoteCursors);
+    });
+
+    // Bindings DOM
+    notes.addEventListener('input', onLocalNotesInput);
+    ['select', 'keyup', 'mouseup', 'focus', 'click'].forEach(ev =>
+      notes.addEventListener(ev, captureSelection)
+    );
+    notes.addEventListener('scroll', () => requestAnimationFrame(renderRemoteCursors));
+    window.addEventListener('resize', () => requestAnimationFrame(renderRemoteCursors));
+
+    // ----- Calcul des coords pixel d'un index dans le textarea (mirror-div) -----
+    let _mirrorDiv = null;
+    function getCaretCoordinates(textarea, index) {
+      if (!_mirrorDiv) {
+        _mirrorDiv = document.createElement('div');
+        _mirrorDiv.style.position = 'absolute';
+        _mirrorDiv.style.visibility = 'hidden';
+        _mirrorDiv.style.left = '-99999px';
+        _mirrorDiv.style.top = '0';
+        _mirrorDiv.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(_mirrorDiv);
+      }
+      const styles = getComputedStyle(textarea);
+      const props = ['fontFamily','fontSize','fontWeight','fontStyle','fontVariant',
+        'fontStretch','lineHeight','letterSpacing','tabSize','textIndent','textTransform',
+        'wordSpacing','paddingTop','paddingRight','paddingBottom','paddingLeft',
+        'borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','boxSizing'];
+      props.forEach(p => _mirrorDiv.style[p] = styles[p]);
+      _mirrorDiv.style.width = textarea.offsetWidth + 'px';
+      _mirrorDiv.style.height = 'auto';
+      _mirrorDiv.style.whiteSpace = 'pre-wrap';
+      _mirrorDiv.style.overflowWrap = 'break-word';
+      _mirrorDiv.style.wordBreak = 'normal';
+
+      const before = textarea.value.substring(0, index);
+      const after = textarea.value.substring(index, index + 1) || '.';
+      _mirrorDiv.textContent = before;
+      const span = document.createElement('span');
+      span.textContent = after;
+      _mirrorDiv.appendChild(span);
+      // offsetTop est relatif au padding-box du parent : on rajoute la
+      // border-top pour obtenir la position depuis le coin externe du textarea.
+      const top  = span.offsetTop  + (parseFloat(styles.borderTopWidth)  || 0);
+      const left = span.offsetLeft + (parseFloat(styles.borderLeftWidth) || 0);
+      _mirrorDiv.removeChild(span);
+      return {
+        top, left,
+        height: parseFloat(styles.lineHeight) || parseFloat(styles.fontSize) * 1.4 || 24
+      };
+    }
+
+    // ----- Rendu des curseurs distants -----
+    function renderRemoteCursors() {
+      if (!cursorsContainer) return;
+      cursorsContainer.innerHTML = '';
+      const states = awareness.getStates();
+      states.forEach((state, clientId) => {
+        if (clientId === ydoc.clientID) return;
+        if (!state.user || !state.cursor) return;
+        let abs;
+        try {
+          const headRel = Y.decodeRelativePosition(new Uint8Array(state.cursor.head));
+          abs = Y.createAbsolutePositionFromRelativePosition(headRel, ydoc);
+        } catch { return; }
+        if (!abs) return;
+        const coords = getCaretCoordinates(notes, abs.index);
+
+        const el = document.createElement('div');
+        el.className = 'remote-cursor';
+        el.style.setProperty('--c', state.user.color || '#D14124');
+        el.style.top = (coords.top - notes.scrollTop) + 'px';
+        el.style.left = (coords.left - notes.scrollLeft) + 'px';
+        el.style.height = coords.height + 'px';
+        el.title = state.user.name || '';
+
+        const label = document.createElement('span');
+        label.className = 'remote-cursor-label';
+        label.textContent = state.user.name || '?';
+        el.appendChild(label);
+
+        cursorsContainer.appendChild(el);
+      });
+    }
+
+    // ===========================================================================
     // 5. SOCKET — branchements
     // ===========================================================================
 
@@ -352,10 +550,14 @@
         isHost = !!h;
         mySocketId = socketId;
         document.body.classList.toggle('is-host', isHost);
+        // Enrichir awareness avec le socketId — utilisé pour cleanup au disconnect
+        awareness.setLocalStateField('user', {
+          name: pseudo,
+          color: colorForName(pseudo),
+          socketId: mySocketId,
+        });
         // Ré-appliquer les locks maintenant qu'on connaît notre rôle
-        // (state arrive avant role, donc applyLocks initial ignorait isHost)
         applyLocks(currentLocks);
-        // Re-render présence : le tag (vous) dépend de mySocketId
         if (participantsCache.length) renderPresence(participantsCache);
         if (isHost) toast('Vous animez cette session', 'info', 2400);
       });
@@ -368,13 +570,38 @@
         }
         titleInput.value = state.title || '';
         document.title = (state.title || 'Réunion') + ' · Journal des Réunions';
-        if (document.activeElement !== notes) {
-          notes.value = state.notes || '';
-        }
+        // Notes : on ne touche PAS notes.value ici. Yjs s'en charge via yjs:sync.
         renderTopics(state.topics || []);
         renderPolls(state.polls || []);
         applyLocks(state.locks || {});
-        updateNotesStats();
+      });
+
+      // === Yjs : synchronisation CRDT des notes ===
+      socket.on('yjs:sync', (update) => {
+        try {
+          Y.applyUpdate(ydoc, new Uint8Array(update), 'remote');
+          // Force-resync le textarea après le snapshot initial
+          notes.value = ytext.toString();
+          prevNotesValue = notes.value;
+          updateNotesStats();
+          if (notesMode === 'preview') renderNotesPreview();
+          requestAnimationFrame(renderRemoteCursors);
+        } catch (e) { console.error('[yjs:sync]', e); }
+      });
+      socket.on('yjs:update', (update) => {
+        try { Y.applyUpdate(ydoc, new Uint8Array(update), 'remote'); }
+        catch (e) { console.error('[yjs:update]', e); }
+      });
+      socket.on('yjs:awareness', (update) => {
+        try { applyAwarenessUpdate(awareness, new Uint8Array(update), 'remote'); }
+        catch (e) { console.error('[yjs:awareness]', e); }
+      });
+      socket.on('awareness:leave', ({ socketId }) => {
+        const toRemove = [];
+        awareness.getStates().forEach((state, clientId) => {
+          if (state.user && state.user.socketId === socketId) toRemove.push(clientId);
+        });
+        if (toRemove.length) removeAwarenessStates(awareness, toRemove, 'remote');
       });
 
       socket.on('participants', (list) => {
@@ -389,22 +616,7 @@
         document.title = (title || 'Réunion') + ' · Journal des Réunions';
       });
 
-      // --- Notes ---
-      socket.on('notes:update', ({ notes: n, by }) => {
-        const cursorWasFocused = document.activeElement === notes;
-        if (!cursorWasFocused) {
-          notes.value = n;
-        } else {
-          const start = notes.selectionStart;
-          const end = notes.selectionEnd;
-          notes.value = n;
-          try { notes.setSelectionRange(start, end); } catch {}
-        }
-        notesBy.textContent = by ? `↳ DERNIÈRE MODIF · ${by.toUpperCase()}` : '';
-        updateNotesStats();
-        // Si on est en mode preview, re-render
-        if (notesMode === 'preview') renderNotesPreview();
-      });
+      // (Notes : géré par Yjs — voir handlers yjs:sync/yjs:update plus haut)
 
       // --- Sujets ---
       socket.on('topic:add', (t) => {
@@ -672,15 +884,9 @@
       });
     });
 
-    let notesTimer = null;
-    notes.addEventListener('input', () => {
-      updateNotesStats();
-      emitTyping('notes');
-      clearTimeout(notesTimer);
-      notesTimer = setTimeout(() => {
-        socket && socket.emit('notes:update', { meetingId, notes: notes.value });
-      }, 250);
-    });
+    // (Pas d'écouteur input ici : la binding Yjs en section 4c écoute déjà
+    // l'event 'input' et applique la diff au Y.Text. Le serveur reçoit les
+    // updates Yjs via ydoc.on('update', ...) plus haut.)
 
     // ===========================================================================
     // 11. SUJETS — rendu, édition inline, Markdown sur description

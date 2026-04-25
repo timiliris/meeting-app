@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Meeting App - serveur principal
 // Express + Socket.io + persistance JSON (1 fichier par réunion)
-// Aucune dépendance native, fonctionne partout.
+// Notes : CRDT Yjs (édition concurrente avec curseurs multiples).
 // ---------------------------------------------------------------------------
 
 const path = require('path');
@@ -10,6 +10,7 @@ const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
 const { nanoid } = require('nanoid');
+const Y = require('yjs');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -18,9 +19,10 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // --- Couche de persistance ------------------------------------------------
 // Une réunion = un fichier JSON dans DATA_DIR/<id>.json
-// Cache mémoire pour éviter de relire à chaque opération.
+// Les notes sont un Y.Doc en mémoire (CRDT) sérialisé en base64.
 const cache = new Map();
-const writeQueues = new Map(); // évite les écritures concurrentes sur le même fichier
+const writeQueues = new Map();    // sérialise les écritures par fichier
+const saveTimers = new Map();     // debounce des sauvegardes Yjs
 
 function fileFor(id) {
   return path.join(DATA_DIR, `${id}.json`);
@@ -32,9 +34,26 @@ function loadMeeting(id) {
   if (!fs.existsSync(f)) return null;
   try {
     const data = JSON.parse(fs.readFileSync(f, 'utf8'));
-    // Migration : champs ajoutés au fil du temps
     if (!data.locks) data.locks = { notes: false, topics: false, polls: false, title: false };
-    if (!data.hostToken) data.hostToken = null; // anciennes réunions : pas d'animateur
+    if (!data.hostToken) data.hostToken = null;
+
+    // Notes : initialisation du Y.Doc
+    data.ydoc = new Y.Doc();
+    if (data.ydocState) {
+      try {
+        Y.applyUpdate(data.ydoc, Buffer.from(data.ydocState, 'base64'));
+      } catch (e) {
+        console.error(`[load] échec décodage Yjs ${id}:`, e.message);
+      }
+    } else if (typeof data.notes === 'string' && data.notes.length > 0) {
+      // Migration : ancien format texte → Y.Text
+      data.ydoc.getText('notes').insert(0, data.notes);
+    }
+    delete data.notes; // on lit toujours via ydoc à partir de maintenant
+
+    // Sauvegarde debouncée à chaque mise à jour
+    data.ydoc.on('update', () => scheduleSave(id));
+
     cache.set(id, data);
     return data;
   } catch (e) {
@@ -43,12 +62,27 @@ function loadMeeting(id) {
   }
 }
 
+function scheduleSave(id) {
+  if (saveTimers.has(id)) return;
+  saveTimers.set(id, setTimeout(() => {
+    saveTimers.delete(id);
+    saveMeeting(id);
+  }, 800));
+}
+
 async function saveMeeting(id) {
   const data = cache.get(id);
   if (!data) return;
+  // Sérialiser le Y.Doc en base64 ; ne pas écrire l'objet ydoc directement
+  const toSave = { ...data };
+  if (data.ydoc) {
+    toSave.ydocState = Buffer.from(Y.encodeStateAsUpdate(data.ydoc)).toString('base64');
+  }
+  delete toSave.ydoc;
+
   const prev = writeQueues.get(id) || Promise.resolve();
   const next = prev.then(() =>
-    fs.promises.writeFile(fileFor(id), JSON.stringify(data, null, 2), 'utf8')
+    fs.promises.writeFile(fileFor(id), JSON.stringify(toSave, null, 2), 'utf8')
       .catch(e => console.error(`[save] échec écriture ${id}:`, e.message))
   );
   writeQueues.set(id, next);
@@ -57,26 +91,30 @@ async function saveMeeting(id) {
 
 function createMeeting(title) {
   const id = nanoid(10);
+  const ydoc = new Y.Doc();
   const data = {
     id,
     title: title || 'Nouvelle réunion',
-    notes: '',
     topics: [],
     polls: [],
-    hostToken: nanoid(24),     // secret — partagé une seule fois avec le créateur
+    hostToken: nanoid(24),
     locks: { notes: false, topics: false, polls: false, title: false },
     createdAt: Date.now(),
     nextTopicId: 1,
+    ydoc,
   };
+  ydoc.on('update', () => scheduleSave(id));
   cache.set(id, data);
   saveMeeting(id);
   return data;
 }
 
-// On ne renvoie JAMAIS hostToken aux clients (sauf à la création).
+// État public renvoyé aux clients : pas de hostToken, pas d'objet ydoc.
+// `notes` est un snapshot textuel pour les clients hors-Yjs / l'API REST.
 function publicState(m) {
   if (!m) return null;
-  const { hostToken, ...rest } = m;
+  const { hostToken, ydoc, ...rest } = m;
+  rest.notes = ydoc ? ydoc.getText('notes').toString() : '';
   return rest;
 }
 
@@ -88,7 +126,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.post('/api/meetings', (req, res) => {
   const title = (req.body && req.body.title) || 'Nouvelle réunion';
   const m = createMeeting(title);
-  // hostToken renvoyé UNE SEULE FOIS, au créateur.
   res.json({ id: m.id, url: `/m/${m.id}`, hostToken: m.hostToken });
 });
 
@@ -104,10 +141,9 @@ app.get('/m/:id', (req, res) => {
 
 // --- Socket.io -------------------------------------------------------------
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { maxHttpBufferSize: 5e6 }); // 5 MB pour les updates Yjs
 
-// participants: meetingId -> Map<socketId, { name, isHost }>
-const participants = new Map();
+const participants = new Map(); // meetingId -> Map<socketId, { name, isHost }>
 
 function emitParticipants(meetingId) {
   const room = participants.get(meetingId);
@@ -121,12 +157,19 @@ function emitParticipants(meetingId) {
 
 function clamp(s, n) { return String(s == null ? '' : s).slice(0, n); }
 
+// Convertit Buffer/ArrayBuffer reçu de Socket.io en Uint8Array pour Yjs
+function toUint8(data) {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (Buffer.isBuffer(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  return new Uint8Array(data);
+}
+
 io.on('connection', (socket) => {
   let joinedMeeting = null;
   let pseudo = 'Anonyme';
   let isHost = false;
 
-  // Vérif "peut écrire dans cette zone" : true si non verrouillée OU si animateur
   function canWrite(m, area) {
     if (!m || !m.locks) return true;
     if (isHost) return true;
@@ -149,18 +192,34 @@ io.on('connection', (socket) => {
 
     socket.emit('state', publicState(m));
     socket.emit('role', { isHost, socketId: socket.id });
+    // Snapshot Yjs complet pour le nouveau client
+    socket.emit('yjs:sync', Y.encodeStateAsUpdate(m.ydoc));
     emitParticipants(meetingId);
   });
 
-  // --- Notes collaboratives ---
-  socket.on('notes:update', ({ meetingId, notes }) => {
-    if (meetingId !== joinedMeeting) return;
-    const m = loadMeeting(meetingId);
+  // --- Notes (Yjs) — relai des updates entre clients + persistance ---
+  socket.on('yjs:update', (update) => {
+    if (!joinedMeeting) return;
+    const m = loadMeeting(joinedMeeting);
     if (!m) return;
-    if (!canWrite(m, 'notes')) return socket.emit('error_msg', 'Notes verrouillées par l\'animateur');
-    m.notes = String(notes || '');
-    saveMeeting(meetingId);
-    socket.to(meetingId).emit('notes:update', { notes: m.notes, by: pseudo });
+    if (!canWrite(m, 'notes')) return; // verrou : on ignore silencieusement
+    try {
+      const u = toUint8(update);
+      Y.applyUpdate(m.ydoc, u, 'remote'); // déclenche scheduleSave via observer
+      socket.to(joinedMeeting).emit('yjs:update', u);
+    } catch (e) {
+      console.error('[yjs:update]', e.message);
+    }
+  });
+
+  // Awareness : positions de curseur, sélections, identité — relais pur
+  socket.on('yjs:awareness', (update) => {
+    if (!joinedMeeting) return;
+    try {
+      socket.to(joinedMeeting).emit('yjs:awareness', toUint8(update));
+    } catch (e) {
+      console.error('[yjs:awareness]', e.message);
+    }
   });
 
   // --- Titre ---
@@ -244,7 +303,6 @@ io.on('connection', (socket) => {
     if (meetingId !== joinedMeeting) return;
     const m = loadMeeting(meetingId);
     if (!m) return;
-    // voter même quand verrouillé (on verrouille la création/suppression, pas le vote)
     const poll = m.polls.find(p => p.id === pollId);
     if (!poll) return;
     const idx = Number(optionIndex);
@@ -265,7 +323,7 @@ io.on('connection', (socket) => {
     io.to(meetingId).emit('poll:delete', { id: pollId });
   });
 
-  // --- Présence : indicateurs "en train d'écrire" (relay simple, pas de persistance) ---
+  // --- Présence : indicateurs "en train d'écrire" ---
   socket.on('typing:start', ({ meetingId, area }) => {
     if (meetingId !== joinedMeeting) return;
     socket.to(meetingId).emit('typing:start', { socketId: socket.id, name: pseudo, area: String(area || '') });
@@ -291,7 +349,7 @@ io.on('connection', (socket) => {
   socket.on('participant:kick', ({ meetingId, targetSocketId }) => {
     if (meetingId !== joinedMeeting) return;
     if (!isHost) return socket.emit('error_msg', 'Action réservée à l\'animateur');
-    if (targetSocketId === socket.id) return; // pas de self-kick
+    if (targetSocketId === socket.id) return;
     const target = io.sockets.sockets.get(targetSocketId);
     if (target) {
       target.emit('kicked');
@@ -302,8 +360,9 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     if (joinedMeeting && participants.has(joinedMeeting)) {
       participants.get(joinedMeeting).delete(socket.id);
-      // Notifier les autres que cette personne a arrêté de typer (cleanup)
       socket.to(joinedMeeting).emit('typing:stop', { socketId: socket.id, area: '*' });
+      // Notifier les autres pour qu'ils retirent le curseur de cette personne
+      socket.to(joinedMeeting).emit('awareness:leave', { socketId: socket.id });
       emitParticipants(joinedMeeting);
     }
   });
