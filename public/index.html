@@ -4,8 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Le Journal des Réunions — Sessions éphémères</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- Init thème AVANT toute peinture pour éviter le FOUC clair→sombre -->
+  <script>
+    (function() {
+      try {
+        var saved = localStorage.getItem('theme');
+        var pref = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', pref);
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body class="home">
@@ -17,12 +28,18 @@
         <span class="glyph"></span>
         <span>LE&nbsp;JOURNAL&nbsp;DES&nbsp;RÉUNIONS</span>
       </div>
-      <nav class="meta">
-        <span>VOL.&nbsp;I</span>
-        <span>ÉPHÉMÈRE</span>
-        <span>SANS&nbsp;COMPTE</span>
-        <span>TEMPS&nbsp;RÉEL</span>
-      </nav>
+      <div class="masthead-right">
+        <nav class="meta">
+          <span>VOL.&nbsp;I</span>
+          <span>ÉPHÉMÈRE</span>
+          <span>SANS&nbsp;COMPTE</span>
+          <span>TEMPS&nbsp;RÉEL</span>
+        </nav>
+        <button id="themeToggle" class="theme-toggle" title="Basculer thème clair / sombre">
+          <span class="glyph">☾</span>
+          <span class="text">Nuit</span>
+        </button>
+      </div>
     </header>
 
     <!-- Bloc principal — typographie monumentale + action -->
@@ -109,6 +126,21 @@
         el.addEventListener('animationend', () => el.remove(), { once: true });
       }, ms);
     }
+
+    // ---------- Thème jour/nuit ----------
+    const themeToggle = document.getElementById('themeToggle');
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      try { localStorage.setItem('theme', theme); } catch {}
+      const isDark = theme === 'dark';
+      themeToggle.querySelector('.glyph').textContent = isDark ? '☀' : '☾';
+      themeToggle.querySelector('.text').textContent  = isDark ? 'Jour' : 'Nuit';
+    }
+    applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
+    themeToggle.addEventListener('click', () => {
+      const cur = document.documentElement.getAttribute('data-theme');
+      applyTheme(cur === 'dark' ? 'light' : 'dark');
+    });
 
     // ---------- Stockage des sessions ----------
     // Une seule clé `meetings` = JSON array de { id, hostToken, title, createdAt }

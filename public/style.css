@@ -10,7 +10,7 @@
 *::selection { background: var(--vermillion); color: var(--paper); }
 
 :root {
-  /* Palette — papier & encre */
+  /* Palette — papier & encre (clair) */
   --paper:        #F2EDE3;
   --paper-deep:   #E8E1D2;
   --paper-fold:   #D9D2C2;
@@ -30,6 +30,10 @@
   --sage:            #6B7F5A;
   --sage-soft:       #C9D2BD;
 
+  /* Mix-blend du grain (multiply en clair = assombrit) */
+  --grain-blend: multiply;
+  --grain-opacity: 0.55;
+
   /* Typo */
   --serif-display: 'Fraunces', 'Times New Roman', serif;
   --serif-body:    'Newsreader', Georgia, serif;
@@ -39,8 +43,43 @@
   --rule:   1.5px solid var(--ink);
   --rule-thin: 1px solid var(--paper-fold);
 
-  /* Grain papier — données URI noise SVG */
+  /* Grain papier — données URI noise SVG (encre sombre, mode multiply) */
   --grain: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.09  0 0 0 0 0.085  0 0 0 0 0.07  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+
+  color-scheme: light;
+}
+
+/* ---------------------------------------------------------------------------
+   Dark mode — "encre de nuit"
+   Inversion intelligente : papier devient encre, encre devient papier.
+   Grain en screen plutôt que multiply (lumineux sur fond sombre).
+   --------------------------------------------------------------------------- */
+:root[data-theme="dark"] {
+  --paper:        #1A1814;
+  --paper-deep:   #14120F;
+  --paper-fold:   #3A352E;
+  --paper-shadow: #0A0908;
+
+  --ink:          #EFEAE0;
+  --ink-soft:     #B8B0A0;
+  --ink-faded:    #807A6E;
+  --ink-ghost:    #4A463E;
+
+  --vermillion:      #FF5A3A;
+  --vermillion-deep: #FF7A5A;
+  --vermillion-soft: #4A2118;
+  --saffron:         #F2C24A;
+  --saffron-soft:    #3D3214;
+  --sage:            #94A685;
+  --sage-soft:       #2F3829;
+
+  --grain-blend: screen;
+  --grain-opacity: 0.4;
+
+  /* Grain inversé — particules claires sur fond sombre */
+  --grain: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.95  0 0 0 0 0.92  0 0 0 0 0.85  0 0 0 0.10 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+
+  color-scheme: dark;
 }
 
 html, body {
@@ -58,15 +97,15 @@ html, body {
 }
 
 body::before {
-  /* grain papier — appliqué globalement */
+  /* grain papier — appliqué globalement, mode adapté au thème */
   content: '';
   position: fixed;
   inset: 0;
   background-image: var(--grain);
   background-size: 200px 200px;
   pointer-events: none;
-  opacity: 0.55;
-  mix-blend-mode: multiply;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
   z-index: 1;
 }
 
@@ -130,6 +169,13 @@ body.home {
 .masthead .meta { display: flex; gap: 1.5rem; flex-wrap: wrap; }
 .masthead .meta span::before { content: '· '; color: var(--ink-ghost); margin-right: 0.3rem; }
 .masthead .meta span:first-child::before { display: none; }
+.masthead-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 
 /* Bloc principal */
 .home-stage {
@@ -1681,6 +1727,39 @@ body.is-host .panel.locked .add-block input,
 body.is-host .panel.locked .add-block textarea {
   background: var(--paper);
   cursor: text;
+}
+
+/* Theme toggle — bouton bascule jour/nuit */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.7rem;
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: var(--radius);
+  box-shadow: none;
+  white-space: nowrap;
+  transition: transform 80ms, background 120ms, color 120ms;
+}
+.theme-toggle:hover {
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: none;
+  transform: none;
+}
+.theme-toggle .glyph {
+  font-family: var(--serif-display);
+  font-size: 0.95rem;
+  line-height: 1;
+  font-weight: 400;
 }
 
 /* Badge "Animateur" dans la topbar */
