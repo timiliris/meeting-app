@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Réunion · Le Journal des Réunions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.9/dist/purify.min.js"></script>
+</head>
+<body class="meeting-body">
+
+  <!-- Modale d'entrée du pseudo -->
+  <div id="joinModal" class="modal-bg">
+    <div class="modal">
+      <h2>Avant d'entrer, <em>présentez-vous</em>.</h2>
+      <p>Un prénom, un pseudonyme — comme on signe le registre d'un atelier.</p>
+      <input id="pseudoInput" type="text" placeholder="ex. Sophie" maxlength="40" autocomplete="off" />
+      <button id="joinBtn" class="primary big">
+        <span>Rejoindre la session</span>
+        <span class="arrow">→</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="meeting-id" title="Identifiant de la réunion">
+      <span class="glyph"></span>
+      <span>SESSION</span>
+      <b id="meetingIdLabel">—</b>
+    </div>
+
+    <input id="meetingTitle" class="title-input" type="text" value="…" maxlength="200" spellcheck="false" />
+
+    <span class="host-badge" title="Vous êtes l'animateur de cette session">Animateur</span>
+
+    <div class="share">
+      <span class="label">LIEN&nbsp;PARTAGEABLE</span>
+      <button id="shareBtn" class="secondary">Copier</button>
+    </div>
+  </header>
+
+  <!-- Bandeau présence -->
+  <div class="presence-bar">
+    <div class="presence-list" id="presenceList"></div>
+    <span class="presence-count" id="presenceCount">0&nbsp;PRÉSENT·E·S</span>
+  </div>
+
+  <main class="layout">
+
+    <!-- Colonne agenda -->
+    <section class="panel" id="topicsPanel">
+      <div class="panel-head">
+        <h2>Ordre <em>du jour</em></h2>
+        <div class="panel-head-right">
+          <span class="typing-here" id="topicsTyping"><span class="dots"><span></span></span><span class="label"></span></span>
+          <button class="lock-toggle" data-area="topics">Verrouiller</button>
+          <span class="num" id="topicsCount">00 SUJETS</span>
+        </div>
+      </div>
+      <div class="lock-banner" id="topicsLockBanner">Agenda verrouillé par l'animateur</div>
+      <div id="topicsList"></div>
+      <div class="add-block">
+        <input id="newTopicTitle" type="text" placeholder="Nouveau sujet à débattre…" maxlength="200" />
+        <textarea id="newTopicDesc" placeholder="Description ou contexte (Markdown supporté)" rows="2" maxlength="2000"></textarea>
+        <button id="addTopicBtn" class="primary">+ Inscrire au registre</button>
+      </div>
+    </section>
+
+    <!-- Colonne notes -->
+    <section class="panel notes-panel" id="notesPanel">
+      <div class="panel-head">
+        <h2>Notes <em>collectives</em></h2>
+        <div class="panel-head-right">
+          <span class="typing-here" id="notesTyping"><span class="dots"><span></span></span><span class="label"></span></span>
+          <button class="lock-toggle" data-area="notes">Verrouiller</button>
+          <span class="num">PRISE&nbsp;COMMUNE</span>
+        </div>
+      </div>
+      <div class="notes-tabs">
+        <button class="notes-tab active" data-mode="edit">Édition</button>
+        <button class="notes-tab" data-mode="preview">Aperçu</button>
+        <span class="notes-help">**gras**  *italique*  `code`  # titre  - liste  [lien](url)  &gt; citation</span>
+      </div>
+      <div class="notes-wrap">
+        <div class="lock-banner" id="notesLockBanner">Notes verrouillées par l'animateur</div>
+        <textarea id="notes" class="notes-area" placeholder="Tapez ici. Vous pouvez utiliser le Markdown — passez sur Aperçu pour voir le rendu." spellcheck="true"></textarea>
+        <div id="notesPreview" class="notes-preview hidden markdown"></div>
+        <div class="notes-meta">
+          <span id="notesBy" class="by"></span>
+          <span id="notesStats" class="stats"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Colonne sondages -->
+    <section class="panel" id="pollsPanel">
+      <div class="panel-head">
+        <h2>Scrutins <em>express</em></h2>
+        <div class="panel-head-right">
+          <span class="typing-here" id="pollsTyping"><span class="dots"><span></span></span><span class="label"></span></span>
+          <button class="lock-toggle" data-area="polls">Verrouiller</button>
+          <span class="num" id="pollsCount">00 ACTIFS</span>
+        </div>
+      </div>
+      <div class="lock-banner" id="pollsLockBanner">Scrutins verrouillés par l'animateur</div>
+      <div id="pollsList"></div>
+      <div class="add-block">
+        <input id="pollQuestion" type="text" placeholder="Question soumise au vote…" maxlength="300" />
+        <div class="add-poll-options" id="pollOptionsWrap">
+          <input class="poll-option-input" type="text" placeholder="Option 1" maxlength="120" />
+          <input class="poll-option-input" type="text" placeholder="Option 2" maxlength="120" />
+        </div>
+        <button id="addOptBtn" class="add-option-btn">+ AJOUTER UNE OPTION</button>
+        <button id="addPollBtn" class="primary">Lancer le scrutin</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast-stack" id="toastStack"></div>
+
+  <script>
+    // ===========================================================================
+    // 1. UTILITAIRES — toasts, markdown, couleurs, IDs
+    // ===========================================================================
+
+    const toastStack = document.getElementById('toastStack');
+    function toast(msg, type = 'info', ms = 3200) {
+      const el = document.createElement('div');
+      el.className = 'toast ' + type;
+      el.textContent = msg;
+      toastStack.appendChild(el);
+      setTimeout(() => {
+        el.classList.add('leaving');
+        el.addEventListener('animationend', () => el.remove(), { once: true });
+      }, ms);
+    }
+
+    // Markdown sécurisé : marked → DOMPurify
+    if (window.marked) {
+      marked.setOptions({ breaks: true, gfm: true });
+    }
+    function renderMd(src) {
+      if (!src) return '';
+      if (!window.marked || !window.DOMPurify) {
+        // Fallback ultra-basique : on échappe tout
+        const div = document.createElement('div');
+        div.textContent = src;
+        return div.innerHTML.replace(/\n/g, '<br>');
+      }
+      return DOMPurify.sanitize(marked.parse(src), {
+        ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','strong','em','code','pre','blockquote','ul','ol','li','a','br','hr','img','table','thead','tbody','tr','th','td','del','input'],
+        ALLOWED_ATTR: ['href','title','alt','src','target','rel','type','checked','disabled'],
+        ALLOW_DATA_ATTR: false,
+      });
+    }
+
+    // Palette papier-encre — couleur déterministe par nom
+    const PALETTE = [
+      '#D14124', '#6B7F5A', '#C28A2C', '#4A6B7F',
+      '#8A5A3C', '#5A4A6B', '#7F5A4A', '#3F5A4A'
+    ];
+    function colorForName(name) {
+      let h = 0;
+      for (const ch of String(name || '')) h = ((h << 5) - h + ch.charCodeAt(0)) | 0;
+      return PALETTE[Math.abs(h) % PALETTE.length];
+    }
+    function initialFor(name) {
+      const t = String(name || '?').trim();
+      return t ? t.slice(0, 1).toUpperCase() : '?';
+    }
+    const pad2 = (n) => String(n).padStart(2, '0');
+
+    // ===========================================================================
+    // 2. IDENTIFIANTS — meetingId, voterId, hostToken
+    // ===========================================================================
+
+    const meetingId = window.location.pathname.split('/').pop();
+    const fullUrl = window.location.href;
+    document.getElementById('meetingIdLabel').textContent = meetingId.toUpperCase();
+
+    let voterId = localStorage.getItem('voterId');
+    if (!voterId) {
+      voterId = 'v_' + Math.random().toString(36).slice(2, 12);
+      localStorage.setItem('voterId', voterId);
+    }
+
+    let hostToken = null;
+    try { hostToken = localStorage.getItem('host:' + meetingId); } catch {}
+
+    // ===========================================================================
+    // 3. MODALE PSEUDO
+    // ===========================================================================
+
+    const joinModal = document.getElementById('joinModal');
+    const pseudoInput = document.getElementById('pseudoInput');
+    const joinBtn = document.getElementById('joinBtn');
+    const savedPseudo = localStorage.getItem('pseudo');
+    if (savedPseudo) pseudoInput.value = savedPseudo;
+    pseudoInput.focus();
+
+    let socket = null;
+    let pseudo = null;
+    let mySocketId = null;
+    let isHost = false;
+
+    function startSession(name) {
+      pseudo = (name || '').trim() || 'Anonyme';
+      localStorage.setItem('pseudo', pseudo);
+      joinModal.classList.add('hidden');
+
+      socket = io();
+      bindSocket();
+      socket.emit('join', { meetingId, name: pseudo, hostToken });
+    }
+
+    joinBtn.addEventListener('click', () => startSession(pseudoInput.value));
+    pseudoInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') startSession(pseudoInput.value);
+    });
+
+    // ===========================================================================
+    // 4. RÉFÉRENCES UI
+    // ===========================================================================
+
+    const titleInput = document.getElementById('meetingTitle');
+    const presenceList = document.getElementById('presenceList');
+    const presenceCount = document.getElementById('presenceCount');
+    const shareBtn = document.getElementById('shareBtn');
+
+    const topicsPanel = document.getElementById('topicsPanel');
+    const topicsList = document.getElementById('topicsList');
+    const topicsCount = document.getElementById('topicsCount');
+    const topicsLockBanner = document.getElementById('topicsLockBanner');
+    const newTopicTitle = document.getElementById('newTopicTitle');
+    const newTopicDesc = document.getElementById('newTopicDesc');
+    const addTopicBtn = document.getElementById('addTopicBtn');
+
+    const notesPanel = document.getElementById('notesPanel');
+    const notes = document.getElementById('notes');
+    const notesPreview = document.getElementById('notesPreview');
+    const notesLockBanner = document.getElementById('notesLockBanner');
+    const notesBy = document.getElementById('notesBy');
+    const notesStats = document.getElementById('notesStats');
+    const notesTabs = document.querySelectorAll('.notes-tab');
+
+    const pollsPanel = document.getElementById('pollsPanel');
+    const pollsList = document.getElementById('pollsList');
+    const pollsCount = document.getElementById('pollsCount');
+    const pollsLockBanner = document.getElementById('pollsLockBanner');
+    const pollQ = document.getElementById('pollQuestion');
+    const pollOptionsWrap = document.getElementById('pollOptionsWrap');
+    const addOptBtn = document.getElementById('addOptBtn');
+    const addPollBtn = document.getElementById('addPollBtn');
+
+    function updateCounts() {
+      const tn = topicsState.length;
+      topicsCount.textContent = `${pad2(tn)} SUJET${tn > 1 ? 'S' : ''}`;
+      const pn = pollsState.length;
+      pollsCount.textContent = `${pad2(pn)} ACTIF${pn > 1 ? 'S' : ''}`;
+    }
+    function updateNotesStats() {
+      const v = notes.value;
+      const chars = v.length;
+      const words = (v.trim().match(/\S+/g) || []).length;
+      notesStats.textContent = chars
+        ? `${words} MOT${words > 1 ? 'S' : ''} · ${chars} CAR.`
+        : '';
+    }
+
+    shareBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(fullUrl);
+        shareBtn.textContent = 'Copié ✓';
+        toast('Lien copié dans le presse-papiers', 'info', 1800);
+        setTimeout(() => (shareBtn.textContent = 'Copier'), 1500);
+      } catch {
+        toast('Impossible de copier le lien', 'error');
+      }
+    });
+
+    // ===========================================================================
+    // 5. SOCKET — branchements
+    // ===========================================================================
+
+    function bindSocket() {
+
+      socket.on('disconnect', () => {
+        toast('Connexion perdue — tentative de reconnexion…', 'error', 4000);
+      });
+
+      socket.on('error_msg', (msg) => toast(msg, 'error'));
+
+      socket.on('kicked', () => {
+        toast('Vous avez été exclu·e de la session par l\'animateur.', 'error', 5000);
+        setTimeout(() => (window.location.href = '/'), 1800);
+      });
+
+      socket.on('role', ({ isHost: h, socketId }) => {
+        isHost = !!h;
+        mySocketId = socketId;
+        document.body.classList.toggle('is-host', isHost);
+        // Ré-appliquer les locks maintenant qu'on connaît notre rôle
+        // (state arrive avant role, donc applyLocks initial ignorait isHost)
+        applyLocks(currentLocks);
+        // Re-render présence : le tag (vous) dépend de mySocketId
+        if (participantsCache.length) renderPresence(participantsCache);
+        if (isHost) toast('Vous animez cette session', 'info', 2400);
+      });
+
+      socket.on('state', (state) => {
+        if (!state) {
+          toast('Réunion introuvable', 'error', 4000);
+          setTimeout(() => (window.location.href = '/'), 1500);
+          return;
+        }
+        titleInput.value = state.title || '';
+        document.title = (state.title || 'Réunion') + ' · Journal des Réunions';
+        if (document.activeElement !== notes) {
+          notes.value = state.notes || '';
+        }
+        renderTopics(state.topics || []);
+        renderPolls(state.polls || []);
+        applyLocks(state.locks || {});
+        updateNotesStats();
+      });
+
+      socket.on('participants', (list) => {
+        renderPresence(list);
+      });
+
+      socket.on('locks:update', (locks) => applyLocks(locks));
+
+      // --- Titre ---
+      socket.on('meeting:title', ({ title }) => {
+        if (document.activeElement !== titleInput) titleInput.value = title;
+        document.title = (title || 'Réunion') + ' · Journal des Réunions';
+      });
+
+      // --- Notes ---
+      socket.on('notes:update', ({ notes: n, by }) => {
+        const cursorWasFocused = document.activeElement === notes;
+        if (!cursorWasFocused) {
+          notes.value = n;
+        } else {
+          const start = notes.selectionStart;
+          const end = notes.selectionEnd;
+          notes.value = n;
+          try { notes.setSelectionRange(start, end); } catch {}
+        }
+        notesBy.textContent = by ? `↳ DERNIÈRE MODIF · ${by.toUpperCase()}` : '';
+        updateNotesStats();
+        // Si on est en mode preview, re-render
+        if (notesMode === 'preview') renderNotesPreview();
+      });
+
+      // --- Sujets ---
+      socket.on('topic:add', (t) => {
+        topicsState.push(t);
+        renderTopics(topicsState);
+      });
+      socket.on('topic:update', (t) => {
+        const i = topicsState.findIndex(x => x.id === t.id);
+        if (i >= 0) topicsState[i] = t;
+        renderTopics(topicsState);
+      });
+      socket.on('topic:delete', ({ id }) => {
+        topicsState = topicsState.filter(t => t.id !== id);
+        renderTopics(topicsState);
+      });
+
+      // --- Sondages ---
+      socket.on('poll:create', (p) => {
+        pollsState.push(p);
+        renderPolls(pollsState);
+      });
+      socket.on('poll:update', ({ id, votes }) => {
+        const p = pollsState.find(x => x.id === id);
+        if (p) { p.votes = votes; renderPolls(pollsState); }
+      });
+      socket.on('poll:delete', ({ id }) => {
+        pollsState = pollsState.filter(p => p.id !== id);
+        renderPolls(pollsState);
+      });
+
+      // --- Présence : typing ---
+      socket.on('typing:start', ({ socketId, name, area }) => {
+        registerTyping(socketId, name, area, true);
+      });
+      socket.on('typing:stop', ({ socketId, area }) => {
+        if (area === '*') {
+          // disconnect cleanup côté serveur
+          for (const a of typersByArea.keys()) registerTyping(socketId, '', a, false);
+        } else {
+          registerTyping(socketId, '', area, false);
+        }
+      });
+    }
+
+    // ===========================================================================
+    // 6. PRÉSENCE — rendu de la barre
+    // ===========================================================================
+
+    let participantsCache = [];
+
+    function renderPresence(list) {
+      participantsCache = list;
+      presenceList.innerHTML = '';
+      list.forEach(p => {
+        const chip = document.createElement('div');
+        chip.className = 'presence-chip';
+        if (p.socketId === mySocketId) chip.classList.add('is-me');
+        if (typersByPerson.get(p.socketId)?.size) chip.classList.add('typing');
+        chip.dataset.socketId = p.socketId;
+        chip.style.setProperty('--c', colorForName(p.name));
+
+        const dot = document.createElement('span');
+        dot.className = 'presence-dot';
+        dot.textContent = initialFor(p.name);
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'presence-name';
+        nameEl.textContent = p.name + (p.socketId === mySocketId ? ' (vous)' : '');
+
+        chip.appendChild(dot);
+        chip.appendChild(nameEl);
+
+        if (p.isHost) {
+          const star = document.createElement('span');
+          star.className = 'presence-host';
+          star.title = 'Animateur·rice';
+          star.textContent = '★';
+          chip.appendChild(star);
+        }
+
+        const typingEl = document.createElement('span');
+        typingEl.className = 'presence-typing';
+        typingEl.innerHTML = '<span></span>';
+        chip.appendChild(typingEl);
+
+        if (p.socketId !== mySocketId) {
+          const kick = document.createElement('button');
+          kick.className = 'presence-kick';
+          kick.textContent = '✕';
+          kick.title = 'Exclure de la session';
+          kick.addEventListener('click', () => {
+            if (confirm(`Exclure ${p.name} de la session ?`)) {
+              socket.emit('participant:kick', { meetingId, targetSocketId: p.socketId });
+            }
+          });
+          chip.appendChild(kick);
+        }
+
+        presenceList.appendChild(chip);
+      });
+      const n = list.length;
+      presenceCount.textContent = `${pad2(n)} PRÉSENT·E${n > 1 ? 'S' : ''}`;
+    }
+
+    // ===========================================================================
+    // 7. TYPING — émission + réception
+    // ===========================================================================
+
+    const TYPING_TIMEOUT = 1500;
+    // Côté émission : pour chaque area, on garde un timer pour envoyer typing:stop
+    const myTypingState = new Map(); // area -> { active, timer }
+
+    function emitTyping(area) {
+      if (!socket) return;
+      let s = myTypingState.get(area);
+      if (!s) { s = { active: false, timer: null }; myTypingState.set(area, s); }
+      if (!s.active) {
+        s.active = true;
+        socket.emit('typing:start', { meetingId, area });
+      }
+      clearTimeout(s.timer);
+      s.timer = setTimeout(() => {
+        s.active = false;
+        socket.emit('typing:stop', { meetingId, area });
+      }, TYPING_TIMEOUT);
+    }
+
+    // Côté réception
+    const typersByArea = new Map(); // area -> Map<socketId, name>
+    const typersByPerson = new Map(); // socketId -> Set<area>
+
+    function registerTyping(socketId, name, area, on) {
+      // par area
+      let aMap = typersByArea.get(area);
+      if (!aMap) { aMap = new Map(); typersByArea.set(area, aMap); }
+      if (on) aMap.set(socketId, name); else aMap.delete(socketId);
+      // par personne
+      let pSet = typersByPerson.get(socketId);
+      if (!pSet) { pSet = new Set(); typersByPerson.set(socketId, pSet); }
+      if (on) pSet.add(area); else pSet.delete(area);
+      if (pSet.size === 0) typersByPerson.delete(socketId);
+      updateTypingUI(area);
+      updatePresenceTypingMarks();
+    }
+
+    const typingZones = {
+      notes:  { el: document.getElementById('notesTyping'),  label: 'EN TRAIN D\'ÉCRIRE LES NOTES' },
+      topics: { el: document.getElementById('topicsTyping'), label: 'AJOUTE UN SUJET' },
+      polls:  { el: document.getElementById('pollsTyping'),  label: 'PRÉPARE UN SCRUTIN' },
+      // 'title' : pas d'indicateur dédié, on le voit dans la chip de présence
+    };
+
+    function updateTypingUI(area) {
+      const zone = typingZones[area];
+      if (!zone) return;
+      const aMap = typersByArea.get(area);
+      const names = aMap ? Array.from(aMap.values()).filter(n => !!n) : [];
+      const labelEl = zone.el.querySelector('.label');
+      if (names.length === 0) {
+        zone.el.classList.remove('active');
+      } else {
+        zone.el.classList.add('active');
+        const list = names.length === 1
+          ? names[0].toUpperCase()
+          : `${names.length} PERSONNES`;
+        labelEl.textContent = list + ' · ' + zone.label;
+      }
+    }
+
+    function updatePresenceTypingMarks() {
+      // Toggle .typing sur chaque chip
+      document.querySelectorAll('.presence-chip').forEach(chip => {
+        const sid = chip.dataset.socketId;
+        if (typersByPerson.get(sid)?.size) chip.classList.add('typing');
+        else chip.classList.remove('typing');
+      });
+    }
+
+    // ===========================================================================
+    // 8. LOCKS — application visuelle des verrous
+    // ===========================================================================
+
+    let currentLocks = {};
+    function applyLocks(locks) {
+      currentLocks = locks || {};
+      // Notes
+      const nl = !!currentLocks.notes;
+      notesPanel.classList.toggle('locked', nl);
+      notesLockBanner.classList.toggle('show', nl);
+      if (nl && !isHost) notes.disabled = true; else notes.disabled = false;
+      // Sujets
+      const tl = !!currentLocks.topics;
+      topicsPanel.classList.toggle('locked', tl);
+      topicsLockBanner.classList.toggle('show', tl);
+      // Scrutins
+      const pl = !!currentLocks.polls;
+      pollsPanel.classList.toggle('locked', pl);
+      pollsLockBanner.classList.toggle('show', pl);
+      // Titre
+      const titleL = !!currentLocks.title;
+      titleInput.readOnly = titleL && !isHost;
+
+      // Mise à jour des toggles eux-mêmes
+      document.querySelectorAll('.lock-toggle').forEach(btn => {
+        const area = btn.dataset.area;
+        const locked = !!currentLocks[area];
+        btn.classList.toggle('locked', locked);
+        btn.textContent = locked ? 'Verrouillé' : 'Verrouiller';
+      });
+    }
+
+    document.querySelectorAll('.lock-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!isHost) return;
+        const area = btn.dataset.area;
+        const locked = !!currentLocks[area];
+        socket.emit('meeting:lock', { meetingId, area, locked: !locked });
+      });
+    });
+
+    // ===========================================================================
+    // 9. TITRE — édition + typing
+    // ===========================================================================
+
+    let titleTimer = null;
+    titleInput.addEventListener('input', () => {
+      emitTyping('title');
+      clearTimeout(titleTimer);
+      titleTimer = setTimeout(() => {
+        socket && socket.emit('meeting:title', { meetingId, title: titleInput.value });
+      }, 400);
+    });
+    titleInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); titleInput.blur(); }
+    });
+
+    // ===========================================================================
+    // 10. NOTES — édition + tabs Markdown + typing
+    // ===========================================================================
+
+    let notesMode = 'edit';
+    function renderNotesPreview() {
+      const html = renderMd(notes.value);
+      if (!html.trim()) {
+        notesPreview.classList.add('empty');
+        notesPreview.textContent = 'Aucune note pour l\'instant.';
+      } else {
+        notesPreview.classList.remove('empty');
+        notesPreview.innerHTML = html;
+      }
+    }
+    notesTabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const mode = tab.dataset.mode;
+        notesMode = mode;
+        notesTabs.forEach(t => t.classList.toggle('active', t === tab));
+        if (mode === 'preview') {
+          renderNotesPreview();
+          notes.classList.add('hidden');
+          notesPreview.classList.remove('hidden');
+        } else {
+          notes.classList.remove('hidden');
+          notesPreview.classList.add('hidden');
+        }
+      });
+    });
+
+    let notesTimer = null;
+    notes.addEventListener('input', () => {
+      updateNotesStats();
+      emitTyping('notes');
+      clearTimeout(notesTimer);
+      notesTimer = setTimeout(() => {
+        socket && socket.emit('notes:update', { meetingId, notes: notes.value });
+      }, 250);
+    });
+
+    // ===========================================================================
+    // 11. SUJETS — rendu, édition inline, Markdown sur description
+    // ===========================================================================
+
+    let topicsState = [];
+
+    function renderTopics(list) {
+      topicsState = list;
+      topicsList.innerHTML = '';
+      updateCounts();
+
+      if (list.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'Le registre est vierge. Inscrivez le premier point ci-dessous.';
+        topicsList.appendChild(empty);
+        return;
+      }
+
+      list.forEach(t => {
+        const div = document.createElement('div');
+        div.className = 'topic' + (t.done ? ' done' : '');
+        div.dataset.topicId = t.id;
+
+        const row = document.createElement('div');
+        row.className = 'topic-row';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!t.done;
+        cb.title = t.done ? 'Marquer comme non traité' : 'Marquer comme traité';
+        cb.addEventListener('change', () => {
+          socket.emit('topic:update', { meetingId, id: t.id, done: cb.checked });
+        });
+
+        const titleSpan = document.createElement('div');
+        titleSpan.className = 'topic-title';
+        titleSpan.textContent = t.title;
+        titleSpan.contentEditable = 'true';
+        titleSpan.spellcheck = false;
+        titleSpan.title = 'Cliquer pour éditer';
+        bindInlineEdit(titleSpan, (v) => {
+          socket.emit('topic:update', { meetingId, id: t.id, title: v });
+        }, 'topics');
+
+        const del = document.createElement('button');
+        del.className = 'danger';
+        del.textContent = '✕';
+        del.title = 'Supprimer';
+        del.addEventListener('click', () => {
+          socket.emit('topic:delete', { meetingId, id: t.id });
+        });
+
+        row.appendChild(cb);
+        row.appendChild(titleSpan);
+        row.appendChild(del);
+        div.appendChild(row);
+
+        // Description : double affichage rendu / source (click-to-edit)
+        const descWrap = document.createElement('div');
+        const hasDesc = t.description && t.description.trim();
+
+        const rendered = document.createElement('div');
+        rendered.className = 'topic-desc markdown' + (hasDesc ? '' : ' empty');
+        if (hasDesc) {
+          rendered.innerHTML = renderMd(t.description);
+        } else {
+          rendered.textContent = 'Ajouter une description (Markdown)…';
+        }
+        rendered.title = 'Cliquer pour éditer';
+
+        const source = document.createElement('textarea');
+        source.className = 'topic-desc-source hidden';
+        source.value = hasDesc ? t.description : '';
+        source.placeholder = 'Description ou contexte (Markdown supporté)…';
+        source.rows = 2;
+
+        rendered.addEventListener('click', () => {
+          rendered.classList.add('hidden');
+          source.classList.remove('hidden');
+          source.focus();
+          source.setSelectionRange(source.value.length, source.value.length);
+        });
+        source.addEventListener('input', () => emitTyping('topics'));
+        source.addEventListener('blur', () => {
+          const v = source.value.trim();
+          source.classList.add('hidden');
+          rendered.classList.remove('hidden');
+          if (v && v !== t.description) {
+            socket.emit('topic:update', { meetingId, id: t.id, description: v });
+          } else if (!v && t.description) {
+            socket.emit('topic:update', { meetingId, id: t.id, description: '' });
+          }
+        });
+        source.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            source.value = t.description || '';
+            source.blur();
+          }
+          // Ctrl+Enter pour valider
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            source.blur();
+          }
+        });
+
+        descWrap.appendChild(rendered);
+        descWrap.appendChild(source);
+        div.appendChild(descWrap);
+
+        topicsList.appendChild(div);
+      });
+    }
+
+    function bindInlineEdit(el, emit, area) {
+      let initial = el.textContent;
+      el.addEventListener('focus', () => { initial = el.textContent; });
+      el.addEventListener('input', () => emitTyping(area));
+      el.addEventListener('blur', () => {
+        if (el.classList.contains('empty')) return;
+        const v = el.textContent.trim();
+        if (v !== initial.trim()) emit(v);
+      });
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+        if (e.key === 'Escape') { el.textContent = initial; el.blur(); }
+      });
+      el.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        document.execCommand('insertText', false, text);
+      });
+    }
+
+    addTopicBtn.addEventListener('click', () => {
+      const title = newTopicTitle.value.trim();
+      if (!title) {
+        toast('Donnez un titre au sujet', 'error', 2200);
+        newTopicTitle.focus();
+        return;
+      }
+      socket.emit('topic:add', {
+        meetingId,
+        title,
+        description: newTopicDesc.value.trim(),
+      });
+      newTopicTitle.value = '';
+      newTopicDesc.value = '';
+      newTopicTitle.focus();
+    });
+    newTopicTitle.addEventListener('input', () => emitTyping('topics'));
+    newTopicDesc.addEventListener('input', () => emitTyping('topics'));
+    newTopicTitle.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addTopicBtn.click(); }
+    });
+
+    // ===========================================================================
+    // 12. SONDAGES — rendu + ajout dynamique d'options
+    // ===========================================================================
+
+    let pollsState = [];
+
+    function renderPolls(list) {
+      pollsState = list;
+      pollsList.innerHTML = '';
+      updateCounts();
+
+      if (list.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'Aucun scrutin en cours. Lancez-en un quand un choix s\'impose.';
+        pollsList.appendChild(empty);
+        return;
+      }
+
+      list.forEach(p => {
+        const div = document.createElement('div');
+        div.className = 'poll';
+
+        const head = document.createElement('div');
+        head.className = 'poll-head';
+
+        const q = document.createElement('div');
+        q.className = 'poll-q';
+        q.textContent = p.question;
+
+        const del = document.createElement('button');
+        del.className = 'danger';
+        del.textContent = '✕';
+        del.title = 'Clore ce scrutin';
+        del.addEventListener('click', () => {
+          socket.emit('poll:delete', { meetingId, pollId: p.id });
+        });
+
+        head.appendChild(q);
+        head.appendChild(del);
+        div.appendChild(head);
+
+        const myVote = p.votes[voterId];
+        const counts = p.options.map((_, i) =>
+          Object.values(p.votes).filter(v => v === i).length
+        );
+        const total = counts.reduce((a, b) => a + b, 0);
+        const max = Math.max(...counts);
+
+        p.options.forEach((opt, i) => {
+          const optDiv = document.createElement('div');
+          optDiv.className = 'poll-option' + (myVote === i ? ' selected' : '');
+
+          const bar = document.createElement('div');
+          bar.className = 'poll-bar';
+          const pct = total > 0 ? Math.round((counts[i] / total) * 100) : 0;
+          bar.style.width = pct + '%';
+
+          const label = document.createElement('span');
+          label.className = 'poll-label';
+          label.textContent = opt;
+
+          const cnt = document.createElement('span');
+          cnt.className = 'poll-count';
+          cnt.textContent = `${counts[i]} · ${pct}%`;
+          if (total > 0 && counts[i] === max && counts[i] > 0) {
+            cnt.style.color = 'var(--vermillion)';
+          }
+
+          optDiv.appendChild(bar);
+          optDiv.appendChild(label);
+          optDiv.appendChild(cnt);
+          optDiv.addEventListener('click', () => {
+            socket.emit('poll:vote', { meetingId, pollId: p.id, optionIndex: i, voterId });
+          });
+          div.appendChild(optDiv);
+        });
+
+        const totalLine = document.createElement('div');
+        totalLine.className = 'poll-total';
+        totalLine.innerHTML = `<span>${total} VOTE${total > 1 ? 'S' : ''} EXPRIMÉ${total > 1 ? 'S' : ''}</span><span>${myVote != null ? '✓ VOUS AVEZ VOTÉ' : 'EN ATTENTE'}</span>`;
+        div.appendChild(totalLine);
+
+        pollsList.appendChild(div);
+      });
+    }
+
+    addOptBtn.addEventListener('click', () => {
+      const inputs = pollOptionsWrap.querySelectorAll('.poll-option-input');
+      if (inputs.length >= 10) {
+        toast('Maximum 10 options', 'error', 2200);
+        return;
+      }
+      const idx = inputs.length + 1;
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'poll-option-input';
+      inp.placeholder = `Option ${idx}`;
+      inp.maxLength = 120;
+      inp.addEventListener('input', () => emitTyping('polls'));
+      pollOptionsWrap.appendChild(inp);
+      inp.focus();
+      if (idx >= 10) addOptBtn.disabled = true;
+    });
+
+    pollQ.addEventListener('input', () => emitTyping('polls'));
+    pollOptionsWrap.addEventListener('input', (e) => {
+      if (e.target.classList.contains('poll-option-input')) emitTyping('polls');
+    });
+
+    addPollBtn.addEventListener('click', () => {
+      const q = pollQ.value.trim();
+      const inputs = pollOptionsWrap.querySelectorAll('.poll-option-input');
+      const opts = Array.from(inputs).map(i => i.value.trim()).filter(o => o);
+      if (!q) { toast('Question requise', 'error'); pollQ.focus(); return; }
+      if (opts.length < 2) { toast('Au moins 2 options', 'error'); return; }
+      socket.emit('poll:create', { meetingId, question: q, options: opts });
+      pollQ.value = '';
+      pollOptionsWrap.innerHTML = `
+        <input class="poll-option-input" type="text" placeholder="Option 1" maxlength="120" />
+        <input class="poll-option-input" type="text" placeholder="Option 2" maxlength="120" />
+      `;
+      addOptBtn.disabled = false;
+    });
+
+  </script>
+</body>
+</html>
