@@ -504,58 +504,62 @@ body.meeting-body {
   min-height: 100vh;
 }
 
-/* Topbar — l'en-tête manuscrit */
+/* Topbar — l'en-tête manuscrit (compact) */
 .topbar {
   background: var(--paper);
   border-bottom: var(--rule);
-  padding: 0.9rem clamp(1rem, 2.5vw, 1.8rem);
+  padding: 0.45rem clamp(0.8rem, 1.6vw, 1.2rem);
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  gap: 1rem 1.5rem;
+  grid-template-columns: auto 1fr auto auto auto auto;
+  gap: 0.4rem 1rem;
   align-items: center;
 }
 @media (max-width: 800px) {
   .topbar {
     grid-template-columns: 1fr auto;
-    gap: 0.6rem 1rem;
+    gap: 0.4rem 0.7rem;
   }
   .topbar .meeting-id { grid-column: 1 / -1; }
 }
 
 .meeting-id {
   font-family: var(--mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.12em;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
   color: var(--ink-faded);
   text-transform: uppercase;
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.4rem;
   white-space: nowrap;
 }
 .meeting-id .glyph {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   background: var(--vermillion);
   display: inline-block;
   transform: rotate(45deg);
 }
-.meeting-id b { color: var(--ink); font-weight: 600; letter-spacing: 0.05em; }
+.meeting-id b { color: var(--ink); font-weight: 600; letter-spacing: 0.04em; }
+/* "SESSION" caché sur écrans étroits — l'ID seul suffit */
+@media (max-width: 1000px) {
+  .meeting-id span:nth-of-type(2) { display: none; }
+}
 
 .title-input {
   font-family: var(--serif-display);
   font-style: italic;
   font-weight: 350;
-  font-size: clamp(1.4rem, 2.5vw, 2rem);
+  font-size: clamp(1.05rem, 1.4vw, 1.3rem);
   line-height: 1.1;
   border: 1px solid transparent;
-  padding: 0.2rem 0.4rem;
+  padding: 0.15rem 0.4rem;
   border-radius: var(--radius);
   background: transparent;
   width: 100%;
   color: var(--ink);
-  font-variation-settings: 'opsz' 60, 'SOFT' 50, 'WONK' 1;
-  letter-spacing: -0.015em;
+  font-variation-settings: 'opsz' 36, 'SOFT' 50, 'WONK' 1;
+  letter-spacing: -0.01em;
   min-width: 0;
 }
 .title-input:hover { background: var(--paper-deep); }
@@ -567,21 +571,21 @@ body.meeting-body {
 
 .share {
   display: flex;
-  gap: 0.6rem;
+  gap: 0.4rem;
   align-items: center;
   font-family: var(--mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.12em;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-faded);
 }
 .share .label { display: none; }
-@media (min-width: 1100px) { .share .label { display: inline; } }
+@media (min-width: 1400px) { .share .label { display: inline; } }
 
 .share button {
-  padding: 0.5rem 0.85rem;
-  font-size: 0.7rem;
-  letter-spacing: 0.1em;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
 }
 
 .participants-pill {
@@ -1445,12 +1449,13 @@ body.meeting-body {
 .presence-bar {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.55rem clamp(1rem, 2.5vw, 1.8rem);
+  gap: 0.8rem;
+  padding: 0.3rem clamp(0.8rem, 1.6vw, 1.2rem);
   background: var(--paper);
   border-bottom: var(--rule-thin);
   overflow-x: auto;
   scrollbar-width: thin;
+  min-height: 32px;
 }
 .presence-bar::-webkit-scrollbar { height: 4px; }
 .presence-bar::-webkit-scrollbar-thumb { background: var(--paper-fold); }
@@ -1466,13 +1471,13 @@ body.meeting-body {
   --c: var(--ink);
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.3rem 0.65rem 0.3rem 0.4rem;
+  gap: 0.35rem;
+  padding: 0.18rem 0.55rem 0.18rem 0.3rem;
   background: var(--paper);
   border: 1px solid var(--paper-fold);
   border-radius: 999px;
   font-family: var(--mono);
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   letter-spacing: 0.04em;
   color: var(--ink-soft);
   white-space: nowrap;
@@ -1489,15 +1494,15 @@ body.meeting-body {
 .presence-chip.is-me .presence-name { color: var(--paper); }
 
 .presence-dot {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: var(--c);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--paper);
-  font-size: 0.6rem;
+  font-size: 0.55rem;
   font-weight: 700;
   line-height: 1;
   flex-shrink: 0;
@@ -1904,15 +1909,15 @@ body.is-host .panel.locked .add-block textarea {
 .theme-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.45rem 0.7rem;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
   background: var(--paper);
   border: 1.5px solid var(--ink);
   color: var(--ink);
   font-family: var(--mono);
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   cursor: pointer;
   border-radius: var(--radius);
@@ -1928,23 +1933,29 @@ body.is-host .panel.locked .add-block textarea {
 }
 .theme-toggle .glyph {
   font-family: var(--serif-display);
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   line-height: 1;
   font-weight: 400;
+}
+/* Sur écrans étroits, on cache le texte du toggle, on garde le glyphe */
+@media (max-width: 1100px) {
+  .theme-toggle .text { display: none; }
+  .theme-toggle { padding: 0.3rem 0.5rem; }
 }
 
 /* Badge "Animateur" dans la topbar */
 .host-badge {
   display: none;
   font-family: var(--mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.18em;
-  padding: 0.3rem 0.55rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.15em;
+  padding: 0.22rem 0.5rem;
   background: var(--saffron);
   color: var(--ink);
   border: 1.5px solid var(--ink);
   text-transform: uppercase;
   border-radius: var(--radius);
+  white-space: nowrap;
 }
 .host-badge::before { content: '★ '; }
 body.is-host .host-badge { display: inline-block; }
