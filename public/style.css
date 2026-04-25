@@ -865,6 +865,37 @@ body.meeting-body {
   align-items: flex-start;
   gap: 0.6rem;
 }
+
+/* Bouton fold/unfold de la description (visible si le sujet a une description) */
+.topic-fold {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--ink-faded);
+  cursor: pointer;
+  box-shadow: none;
+  letter-spacing: 0;
+  text-transform: none;
+  flex-shrink: 0;
+  margin-top: 2px;
+  line-height: 1;
+  transition: transform 160ms ease, color 120ms;
+  border-radius: var(--radius);
+}
+.topic-fold:hover {
+  color: var(--vermillion);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  border-color: transparent;
+}
+.topic.collapsed .topic-fold { transform: rotate(-90deg); }
+.topic.collapsed .topic-fold:hover { transform: rotate(-90deg); color: var(--vermillion); }
+.topic.collapsed .topic-desc-wrap { display: none; }
 /* Checkbox papier */
 .topic-row input[type="checkbox"] {
   appearance: none;
@@ -944,7 +975,8 @@ body.meeting-body {
   border-left-style: dashed;
 }
 
-/* Formulaire d'ajout */
+/* Formulaire d'ajout — sticky au bas du panneau pour rester visible quand
+   la liste défile. background hérite du panneau pour masquer le contenu derrière. */
 .add-block {
   margin-top: auto;
   padding-top: 1.2rem;
@@ -952,8 +984,15 @@ body.meeting-body {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
-  position: relative;
+  position: sticky;
+  bottom: 0;
+  background: var(--paper);
+  z-index: 2;
+  /* léger débordement bas pour éviter un trait blanc en sub-pixel rendering */
+  margin-bottom: -1px;
+  padding-bottom: 1px;
 }
+.notes-panel .add-block { background: var(--paper-deep); }
 .add-block::before {
   content: '+ AJOUTER';
   position: absolute;

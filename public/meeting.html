@@ -778,6 +778,7 @@
       });
       socket.on('topic:delete', ({ id }) => {
         topicsState = topicsState.filter(t => t.id !== id);
+        collapsedTopics.delete(id);
         renderTopics(topicsState);
       });
 
@@ -1041,6 +1042,8 @@
     // ===========================================================================
 
     let topicsState = [];
+    // État de pliage des descriptions par topic id (mémoire de session uniquement)
+    const collapsedTopics = new Set();
 
     function renderTopics(list) {
       topicsState = list;
@@ -1057,7 +1060,9 @@
 
       list.forEach(t => {
         const div = document.createElement('div');
-        div.className = 'topic' + (t.done ? ' done' : '');
+        const hasDesc = t.description && t.description.trim();
+        const isCollapsed = hasDesc && collapsedTopics.has(t.id);
+        div.className = 'topic' + (t.done ? ' done' : '') + (isCollapsed ? ' collapsed' : '');
         div.dataset.topicId = t.id;
 
         const row = document.createElement('div');
@@ -1069,6 +1074,25 @@
         cb.title = t.done ? 'Marquer comme non traité' : 'Marquer comme traité';
         cb.addEventListener('change', () => {
           socket.emit('topic:update', { meetingId, id: t.id, done: cb.checked });
+        });
+
+        // Bouton fold/unfold de la description (visible seulement si description présente)
+        const fold = document.createElement('button');
+        fold.className = 'topic-fold';
+        fold.textContent = '▾';
+        fold.title = isCollapsed ? 'Déplier la description' : 'Replier la description';
+        fold.style.visibility = hasDesc ? 'visible' : 'hidden';
+        fold.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (collapsedTopics.has(t.id)) {
+            collapsedTopics.delete(t.id);
+            div.classList.remove('collapsed');
+            fold.title = 'Replier la description';
+          } else {
+            collapsedTopics.add(t.id);
+            div.classList.add('collapsed');
+            fold.title = 'Déplier la description';
+          }
         });
 
         const titleSpan = document.createElement('div');
@@ -1090,13 +1114,14 @@
         });
 
         row.appendChild(cb);
+        row.appendChild(fold);
         row.appendChild(titleSpan);
         row.appendChild(del);
         div.appendChild(row);
 
         // Description : double affichage rendu / source (click-to-edit)
         const descWrap = document.createElement('div');
-        const hasDesc = t.description && t.description.trim();
+        descWrap.className = 'topic-desc-wrap';
 
         const rendered = document.createElement('div');
         rendered.className = 'topic-desc markdown' + (hasDesc ? '' : ' empty');
